@@ -76,15 +76,9 @@ jobs:
         if: always()
         run: |
           echo "Runner files are ephemeral — no persistent storage used."
-          # Remove any leftover artifacts from previous failed runs
+          echo "Artifacts:"
           curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            "https://api.github.com/repos/${{ github.repository }}/actions/artifacts?per_page=100" \
-            | python3 -c "
-import json,sys
-d=json.load(sys.stdin)
-for a in d.get('artifacts',[]):
-    print('artifact:', a['name'], a['id'])
-" || true
+            "https://api.github.com/repos/${{ github.repository }}/actions/artifacts?per_page=100" | grep -o '"name": *"[^"]*"' || echo "none"
 
       # Upload artifact ONLY if the YouTube upload didn't happen (so nothing is kept after success)
       - name: Upload video artifact (fallback only)
