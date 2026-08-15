@@ -14,18 +14,6 @@ on:
         description: 'Optional YouTube playlist ID (PL...) to add the video to'
         required: false
         default: ''
-      yt_client_id:
-        description: 'YouTube OAuth client ID'
-        required: false
-        default: ''
-      yt_client_secret:
-        description: 'YouTube OAuth client secret'
-        required: false
-        default: ''
-      yt_refresh_token:
-        description: 'YouTube OAuth refresh token'
-        required: false
-        default: ''
 
 jobs:
   render-and-upload:
@@ -54,9 +42,9 @@ jobs:
 
       - name: Upload to YouTube
         env:
-          YT_CLIENT_ID: ${{ github.event.inputs.yt_client_id }}
-          YT_CLIENT_SECRET: ${{ github.event.inputs.yt_client_secret }}
-          YT_REFRESH_TOKEN: ${{ github.event.inputs.yt_refresh_token }}
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
           YT_PRIVACY: ${{ github.event.inputs.privacy }}
           YT_PLAYLIST: ${{ github.event.inputs.playlist }}
         run: python upload_youtube.py
