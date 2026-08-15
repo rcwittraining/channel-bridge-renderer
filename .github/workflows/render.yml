@@ -1,153 +1,96 @@
-#!/usr/bin/env python3
-"""
-RCW Cloud Video Renderer — runs in GitHub Actions (free cloud minutes).
-Input : video_script.json (slides + narration text per slide)
-Output: rendered MP4 (1280x720, slides + AI voiceover), unlimited length.
-"""
-import json, os, subprocess, sys, tempfile
+name: Render Lab Video
 
-def log(m): print(f"[renderer] {m}", flush=True)
+on:
+  workflow_dispatch:
+    inputs:
+      script:
+        description: 'Base64-encoded video_script.json (title, description, tags, slides with narration)'
+        required: true
+      privacy:
+        description: 'privacyStatus (private | unlisted | public)'
+        required: false
+        default: 'unlisted'
+      playlist:
+        description: 'Optional YouTube playlist ID (PL...) to add the video to'
+        required: false
+        default: ''
+      yt_client_id:
+        description: 'YouTube OAuth client ID'
+        required: false
+        default: ''
+      yt_client_secret:
+        description: 'YouTube OAuth client secret'
+        required: false
+        default: ''
+      yt_refresh_token:
+        description: 'YouTube OAuth refresh token'
+        required: false
+        default: ''
 
-def main():
-    script_path = "video_script.json"
-    if not os.path.exists(script_path):
-        sys.exit("video_script.json not found")
-    script = json.load(open(script_path, encoding="utf-8"))
+jobs:
+  render-and-upload:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
 
-    title = script.get("title", "RCW IT Training Lab")
-    slides = script.get("slides", [])
-    if not slides:
-        sys.exit("no slides in script")
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
 
-    log(f"Rendering '{title}' with {len(slides)} slides")
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg espeak-ng
+          pip install pillow google-api-python-client google-auth google-auth-oauthlib google-auth-httplib2
 
-    # ---- 1) Build one slide image per slide (1280x720) with PIL ----
-    try:
-        from PIL import Image, ImageDraw, ImageFont
-    except ImportError:
-        subprocess.run([sys.executable, "-m", "pip", "install", "-q", "pillow"], check=True)
-        from PIL import Image, ImageDraw, ImageFont
+      - name: Decode script
+        run: |
+          echo "${{ github.event.inputs.script }}" | base64 -d > video_script.json
+          echo "Script received:" && python3 -c "import json;d=json.load(open('video_script.json'));print(' title:',d.get('title'));print(' slides:',len(d.get('slides',[])))"
 
-    os.makedirs("slides", exist_ok=True)
-    fonts = []
-    for cand in ["/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-                 "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"]:
-        if os.path.exists(cand):
-            fonts.append(cand)
-    def font(sz, bold=True):
-        if fonts and bold:
-            try: return ImageFont.truetype(fonts[0], sz)
-            except Exception: pass
-        return ImageFont.load_default()
+      - name: Render video (slides + AI voiceover)
+        run: python renderer_lib.py
 
-    W, H = 1280, 720
-    for i, s in enumerate(slides):
-        img = Image.new("RGB", (W, H), "#061633")
-        d = ImageDraw.Draw(img)
-        # top gold bar
-        d.rectangle([0, 0, W, 12], fill="#ffd51d")
-        # heading
-        d.text((60, 70), s.get("heading", "Slide"), font=font(54), fill="#ffffff")
-        # body lines (wrap)
-        y = 170
-        body = s.get("body", "")
-        for line in body.split("\n"):
-            line = line.strip()
-            if not line: y += 30; continue
-            # crude wrap at ~62 chars
-            while len(line) > 62:
-                d.text((60, y), line[:62], font=font(28), fill="#dbe7ff")
-                line = line[62:]; y += 40
-            d.text((60, y), line, font=font(28), fill="#dbe7ff")
-            y += 40
-        # footer
-        d.text((60, H - 55), "RCW IT Training — www.rcwittraining.in", font=font(24), fill="#4bd7ff")
-        img.save(f"slides/slide_{i:03d}.png")
-    log("slides rendered")
+      - name: Upload to YouTube
+        env:
+          YT_CLIENT_ID: ${{ github.event.inputs.yt_client_id }}
+          YT_CLIENT_SECRET: ${{ github.event.inputs.yt_client_secret }}
+          YT_REFRESH_TOKEN: ${{ github.event.inputs.yt_refresh_token }}
+          YT_PRIVACY: ${{ github.event.inputs.privacy }}
+          YT_PLAYLIST: ${{ github.event.inputs.playlist }}
+        run: python upload_youtube.py
 
-    # ---- 2) Generate narration audio per slide (macOS `say` if available, else espeak-ng) ----
-    os.makedirs("audio", exist_ok=True)
-    for i, s in enumerate(slides):
-        text = s.get("narration") or s.get("body") or s.get("heading") or ""
-        text = text.strip()
-        if not text: continue
-        txt_path = f"audio/slide_{i:03d}.txt"
-        with open(txt_path, "w", encoding="utf-8") as f:
-            f.write(text)
-        wav = f"audio/slide_{i:03d}.wav"
-        # Try espeak-ng (available on ubuntu runners)
-        subprocess.run(["espeak-ng", "-v", "en-us", "-s", "150", "-w", wav, "-f", txt_path], check=False)
-        if not os.path.exists(wav) or os.path.getsize(wav) < 100:
-            log(f"  espeak failed for slide {i}, using silent gap")
-            # create silent wav via ffmpeg
-            subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=22050:cl=mono",
-                            "-t", "6", wav], check=False)
-    log("narration audio generated")
+      - name: Write summary
+        run: |
+          {
+            echo "## Render + Upload result"
+            echo ""
+            echo "Video file: \`$(ls -lh output.mp4 | awk '{print $5}')\`"
+            echo "Video URL: $(grep -o 'https://youtu.be/[A-Za-z0-9_-]*' upload.log 2>/dev/null || echo 'see step log')"
+            echo "Privacy: ${{ github.event.inputs.privacy }}"
+          } >> "$GITHUB_STEP_SUMMARY"
 
-    # ---- 3) Stitch with ffmpeg: each slide shown for its narration duration + 0.8s ----
-    segs = []
-    for i, s in enumerate(slides):
-        img = f"slides/slide_{i:03d}.png"
-        wav = f"audio/slide_{i:03d}.wav"
-        if os.path.exists(wav):
-            dur = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
-                                  "-of", "default=noprint_wrappers=1:nokey=1", wav],
-                                 capture_output=True, text=True).stdout.strip()
-            try: dur = float(dur) + 0.8
-            except Exception: dur = 7.0
-        else:
-            dur = 7.0
-        segs.append({"img": img, "wav": wav, "dur": dur})
+      # CLEANUP: runners are ephemeral (files die with the VM) + delete any old artifacts
+      - name: Cleanup artifacts (keep repo tidy)
+        if: always()
+        run: |
+          echo "Runner files are ephemeral — no persistent storage used."
+          # Remove any leftover artifacts from previous failed runs
+          curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/artifacts?per_page=100" \
+            | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+for a in d.get('artifacts',[]):
+    print('artifact:', a['name'], a['id'])
+" || true
 
-    with open("concat.txt", "w") as f:
-        for seg in segs:
-            f.write(f"file '{os.path.abspath(seg['img'])}'\n")
-            f.write(f"duration {seg['dur']:.3f}\n")
-
-    # Build filter: each image -> looped video, audio appended
-    inputs = []
-    for seg in segs:
-        inputs += ["-loop", "1", "-i", seg["img"]]
-        if os.path.exists(seg["wav"]):
-            inputs += ["-i", seg["wav"]]
-    # We'll do it in two steps: video part + audio concat
-    vf = []
-    idx = 0
-    for i, seg in enumerate(segs):
-        vf.append(f"[{i}:v]scale=1280:720,setsar=1,trim=duration={seg['dur']:.3f},setpts=PTS-STARTPTS[v{i}]")
-    vf.append("".join(f"[v{i}]" for i in range(len(segs))) + f"concat=n={len(segs)}:v=1:a=0[vout]")
-
-    # audio: concat all wavs
-    af = []
-    a_idx = 0
-    for i, seg in enumerate(segs):
-        if os.path.exists(seg["wav"]):
-            af.append(f"[{i*2+1}:a]atrim=0:{seg['dur']:.3f},asetpts=PTS-STARTPTS[a{i}]")
-            a_idx = i
-    # simpler: build audio concat filter list
-    audio_inputs = [i for i, seg in enumerate(segs) if os.path.exists(seg["wav"])]
-    afilt = "".join(f"[{i*2+1}:a]aresample=22050,atrim=0:{segs[i]['dur']:.3f},asetpts=PTS-STARTPTS[a{i}]" for i in audio_inputs)
-    if audio_inputs:
-        afilt += "".join(f"[a{i}]" for i in audio_inputs) + f"concat=n={len(audio_inputs)}:v=0:a=1[aout]"
-
-    cmd = ["ffmpeg", "-y"]
-    for seg in segs:
-        cmd += ["-loop", "1", "-i", seg["img"]]
-    for seg in segs:
-        if os.path.exists(seg["wav"]):
-            cmd += ["-i", seg["wav"]]
-    cmd += ["-filter_complex", ";".join(vf + ([afilt] if audio_inputs else [])),
-            "-map", "[vout]"]
-    if audio_inputs:
-        cmd += ["-map", "[aout]"]
-    cmd += ["-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p",
-            "-c:a", "aac", "-b:a", "128k", "-shortest", "output.mp4"]
-    log("running ffmpeg: " + " ".join(cmd)[:400])
-    r = subprocess.run(cmd, capture_output=True, text=True)
-    if r.returncode != 0:
-        log("ffmpeg error: " + r.stderr[-1500:])
-        sys.exit("ffmpeg failed")
-    log("DONE — output.mp4")
-
-if __name__ == "__main__":
-    main()
+      # Upload artifact ONLY if the YouTube upload didn't happen (so nothing is kept after success)
+      - name: Upload video artifact (fallback only)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rendered-video-fallback
+          path: output.mp4
+          retention-days: 7
