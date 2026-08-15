@@ -40,19 +40,23 @@ def main():
     log("slides rendered")
 
     os.makedirs("audio",exist_ok=True)
+    # Natural voice via edge-tts (free, Microsoft neural voices). Voice configurable.
+    voice = os.environ.get("TTS_VOICE", "en-US-JennyNeural")
+    rate  = os.environ.get("TTS_RATE", "+0%")
     for i,s in enumerate(slides):
         text=(s.get("narration") or s.get("body") or s.get("heading") or "").strip()
         if not text: continue
-        open(f"audio/slide_{i:03d}.txt","w",encoding="utf-8").write(text)
-        wav=f"audio/slide_{i:03d}.wav"
-        subprocess.run(["espeak-ng","-v","en-us","-s","150","-w",wav,"-f",f"audio/slide_{i:03d}.txt"],check=False)
+        wav=f"audio/slide_{i:03d}.mp3"
+        # edge-tts outputs mp3; we convert to wav for ffmpeg concat later
+        subprocess.run(["edge-tts","--voice",voice,"--rate",rate,"--text",text,"--write-media",wav],check=False)
         if not os.path.exists(wav) or os.path.getsize(wav)<100:
+            log(f"  edge-tts failed for slide {i}, using silent gap")
             subprocess.run(["ffmpeg","-y","-f","lavfi","-i","anullsrc=r=22050:cl=mono","-t","6",wav],check=False)
-    log("audio generated")
+    log("audio generated (edge-tts natural voice)")
 
     segs=[]
     for i,s in enumerate(slides):
-        wav=f"audio/slide_{i:03d}.wav"; dur=7.0
+        wav=f"audio/slide_{i:03d}.mp3"; dur=7.0
         if os.path.exists(wav):
             out=subprocess.run(["ffprobe","-v","error","-show_entries","format=duration","-of","default=noprint_wrappers=1:nokey=1",wav],capture_output=True,text=True).stdout.strip()
             try: dur=float(out)+0.8
