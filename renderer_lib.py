@@ -37,6 +37,7 @@ def main():
             d.text((60,y),line,font=font(28),fill="#dbe7ff"); y+=40
         d.text((60,H-55),"RCW IT Training - www.rcwittraining.in",font=font(24),fill="#4bd7ff")
         img.save(f"slides/slide_{i:03d}.png")
+        log(f"RENDER_PROGRESS={int((i+1)/len(slides)*50)}")  # slides = first 50%
     log("slides rendered")
 
     os.makedirs("audio",exist_ok=True)
@@ -49,6 +50,7 @@ def main():
         wav=f"audio/slide_{i:03d}.mp3"
         # edge-tts outputs mp3; we convert to wav for ffmpeg concat later
         subprocess.run(["edge-tts","--voice",voice,"--rate",rate,"--text",text,"--write-media",wav],check=False)
+        log(f"RENDER_PROGRESS={50 + int((i+1)/len(slides)*25)}")  # audio = next 25%
         if not os.path.exists(wav) or os.path.getsize(wav)<100:
             log(f"  edge-tts failed for slide {i}, using silent gap")
             subprocess.run(["ffmpeg","-y","-f","lavfi","-i","anullsrc=r=22050:cl=mono","-t","6",wav],check=False)
@@ -92,10 +94,12 @@ def main():
         cmd += ["-map","[aout]"]
     cmd += ["-c:v","libx264","-preset","veryfast","-crf","23","-pix_fmt","yuv420p",
             "-c:a","aac","-b:a","128k","-shortest","output.mp4"]
+    log("RENDER_PROGRESS=75")
     log("running ffmpeg...")
     r=subprocess.run(cmd,capture_output=True,text=True)
     if r.returncode!=0:
         log("ffmpeg error: "+r.stderr[-1200:]); sys.exit("ffmpeg failed")
+    log("RENDER_PROGRESS=100")
     log("DONE - output.mp4")
     log("DONE - output.mp4")
 
