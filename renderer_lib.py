@@ -24,19 +24,49 @@ def main():
             except Exception: pass
         return ImageFont.load_default()
     W,H = 1280,720
+    # CODE MODE: if a slide has a "code" list, render a terminal window with
+    # typed lines + syntax highlight. Otherwise render the normal slide.
     for i,s in enumerate(slides):
+        code = s.get("code") or []
         img = Image.new("RGB",(W,H),"#061633"); d=ImageDraw.Draw(img)
         d.rectangle([0,0,W,12],fill="#ffd51d")
         d.text((60,70),s.get("heading","Slide"),font=font(54),fill="#ffffff")
-        y=170
-        for line in (s.get("body","") or "").split("\n"):
-            line=line.strip()
-            if not line: y+=30; continue
-            while len(line)>62:
-                d.text((60,y),line[:62],font=font(28),fill="#dbe7ff"); line=line[62:]; y+=40
-            d.text((60,y),line,font=font(28),fill="#dbe7ff"); y+=40
-        d.text((60,H-55),"RCW IT Training - www.rcwittraining.in",font=font(24),fill="#4bd7ff")
-        img.save(f"slides/slide_{i:03d}.png")
+        if code:
+            # Terminal window
+            d.rounded_rectangle([60,150,W-60,H-90],radius=16,fill="#0d1117",outline="#2b3441",width=3)
+            # title bar
+            d.rounded_rectangle([60,150,W-60,205],radius=16,fill="#161b22",outline="#2b3441",width=3)
+            d.ellipse([85,168,101,184],fill="#ff5f57")
+            d.ellipse([110,168,126,184],fill="#febc2e")
+            d.ellipse([135,168,151,184],fill="#28c840")
+            d.text((160,164), s.get("terminal_title") or "bash - lab", font=font(20), fill="#8b949e")
+            # code lines with prompt, $ for commands
+            y=225
+            for ln in code[:12]:
+                ln=str(ln)
+                if ln.startswith("$ "):
+                    d.text((85,y), "$ ", font=font(26), fill="#3fb950")
+                    d.text((140,y), ln[2:], font=font(26), fill="#e6edf3")
+                elif ln.startswith("#"):
+                    d.text((85,y), ln, font=font(24), fill="#8b949e")
+                elif ln.startswith("//"):
+                    d.text((85,y), ln, font=font(24), fill="#8b949e")
+                else:
+                    d.text((85,y), ln, font=font(26), fill="#79c0ff")
+                y+=40
+            d.text((60,H-55),"RCW IT Training - www.rcwittraining.in",font=font(24),fill="#4bd7ff")
+            img.save(f"slides/slide_{i:03d}.png")
+        else:
+            d.text((60,y0:=170),"")
+            y=170
+            for line in (s.get("body","") or "").split("\n"):
+                line=line.strip()
+                if not line: y+=30; continue
+                while len(line)>62:
+                    d.text((60,y),line[:62],font=font(28),fill="#dbe7ff"); line=line[62:]; y+=40
+                d.text((60,y),line,font=font(28),fill="#dbe7ff"); y+=40
+            d.text((60,H-55),"RCW IT Training - www.rcwittraining.in",font=font(24),fill="#4bd7ff")
+            img.save(f"slides/slide_{i:03d}.png")
         log(f"RENDER_PROGRESS={int((i+1)/len(slides)*50)}")  # slides = first 50%
     log("slides rendered")
 
@@ -46,6 +76,8 @@ def main():
     rate  = os.environ.get("TTS_RATE", "+0%")
     for i,s in enumerate(slides):
         text=(s.get("narration") or s.get("body") or s.get("heading") or "").strip()
+        if not text and s.get("code"):
+            text="Let's look at the next part of the lab. " + " ".join(str(x).replace("$ ","") for x in s["code"][:8])
         if not text: continue
         wav=f"audio/slide_{i:03d}.mp3"
         # edge-tts outputs mp3; we convert to wav for ffmpeg concat later
